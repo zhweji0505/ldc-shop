@@ -1,0 +1,388 @@
+import { db } from "./index";
+import { products, cards, orders, settings, reviews, loginUsers } from "./schema";
+import { eq, sql, desc, and, asc, gte } from "drizzle-orm";
+
+export async function getProducts() {
+    return await db.select({
+        id: products.id,
+        name: products.name,
+        description: products.description,
+        price: products.price,
+        image: products.image,
+        category: products.category,
+        isActive: products.isActive,
+        sortOrder: products.sortOrder,
+        purchaseLimit: products.purchaseLimit,
+        stock: sql<number>`count(case when ${cards.isUsed} = false then 1 end)::int`,
+        sold: sql<number>`count(case when ${cards.isUsed} = true then 1 end)::int`
+    })
+        .from(products)
+        .leftJoin(cards, eq(products.id, cards.productId))
+        .groupBy(products.id)
+        .orderBy(asc(products.sortOrder), desc(products.createdAt));
+}
+
+// Get only active products (for home page)
+export async function getActiveProducts() {
+    return await db.select({
+        id: products.id,
+        name: products.name,
+        description: products.description,
+        price: products.price,
+        image: products.image,
+        category: products.category,
+        purchaseLimit: products.purchaseLimit,
+        stock: sql<number>`count(case when ${cards.isUsed} = false then 1 end)::int`,
+        sold: sql<number>`count(case when ${cards.isUsed} = true then 1 end)::int`
+    })
+        .from(products)
+        .leftJoin(cards, eq(products.id, cards.productId))
+        .where(eq(products.isActive, true))
+        .groupBy(products.id)
+        .orderBy(asc(products.sortOrder), desc(products.createdAt));
+}
+
+export async function getProduct(id: string) {
+    const result = await db.select({
+        id: products.id,
+        name: products.name,
+        description: products.description,
+        price: products.price,
+        image: products.image,
+        category: products.category,
+        purchaseLimit: products.purchaseLimit,
+        stock: sql<number>`count(case when ${cards.isUsed} = false then 1 end)::int`
+    })
+        .from(products)
+        .leftJoin(cards, eq(products.id, cards.productId))
+        .where(eq(products.id, id))
+        .groupBy(products.id);
+
+    return result[0];
+}
+
+// Dashboard Stats
+export async function getDashboardStats() {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekStart = new Date(todayStart);
+    weekStart.setDate(weekStart.getDate() - 7);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // Get all delivered orders
+    const allOrders = await db.query.orders.findMany({
+        where: eq(orders.status, 'delivered')
+    });
+
+    const todayOrders = allOrders.filter(o => o.paidAt && new Date(o.paidAt) >= todayStart);
+    const weekOrders = allOrders.filter(o => o.paidAt && new Date(o.paidAt) >= weekStart);
+    const monthOrders = allOrders.filter(o => o.paidAt && new Date(o.paidAt) >= monthStart);
+
+    const sumAmount = (orders: typeof allOrders) =>
+        orders.reduce((sum, o) => sum + parseFloat(o.amount), 0);
+
+    return {
+        today: { count: todayOrders.length, revenue: sumAmount(todayOrders) },
+        week: { count: weekOrders.length, revenue: sumAmount(weekOrders) },
+        month: { count: monthOrders.length, revenue: sumAmount(monthOrders) },
+        total: { count: allOrders.length, revenue: sumAmount(allOrders) }
+    };
+}
+
+// Settings
+export async function getSetting(key: string): Promise<string | null> {
+    const result = await db.select({ value: settings.value })
+        .from(settings)
+        .where(eq(settings.key, key));
+    return result[0]?.value ?? null;
+}
+
+export async function setSetting(key: string, value: string): Promise<void> {
+    await db.insert(settings)
+        .values({ key, value, updatedAt: new Date() })
+        .onConflictDoUpdate({
+            target: settings.key,
+            set: { value, updatedAt: new Date() }
+        });
+}
+
+// Reviews
+export async function getProductReviews(productId: string) {
+    return await db.select()
+        .from(reviews)
+        .where(eq(reviews.productId, productId))
+        .orderBy(desc(reviews.createdAt));
+}
+
+export async function getProductRating(productId: string): Promise<{ average: number; count: number }> {
+    const result = await db.select({
+        avg: sql<number>`COALESCE(AVG(${reviews.rating}), 0)::float`,
+        count: sql<number>`COUNT(*)::int`
+    })
+        .from(reviews)
+        .where(eq(reviews.productId, productId));
+
+    return {
+        average: result[0]?.avg ?? 0,
+        count: result[0]?.count ?? 0
+    };
+}
+
+export async function createReview(data: {
+    productId: string;
+    orderId: string;
+    userId: string;
+    username: string;
+    rating: number;
+    comment?: string;
+}) {
+    return await db.insert(reviews).values({
+        ...data,
+        createdAt: new Date()
+    }).returning();
+}
+
+export async function canUserReview(userId: string, productId: string, username?: string): Promise<{ canReview: boolean; orderId?: string }> {
+    try {
+        // Check by userId first
+        let deliveredOrders = await db.select({ orderId: orders.orderId })
+            .from(orders)
+            .where(and(
+                eq(orders.userId, userId),
+                eq(orders.productId, productId),
+                eq(orders.status, 'delivered')
+            ));
+
+        // If no orders found by userId, try by username
+        if (deliveredOrders.length === 0 && username) {
+            deliveredOrders = await db.select({ orderId: orders.orderId })
+                .from(orders)
+                .where(and(
+                    eq(orders.username, username),
+                    eq(orders.productId, productId),
+                    eq(orders.status, 'delivered')
+                ));
+        }
+
+        if (deliveredOrders.length === 0) {
+            return { canReview: false };
+        }
+
+        // Find the first order that hasn't been reviewed yet
+        for (const order of deliveredOrders) {
+            try {
+                const existingReview = await db.select({ id: reviews.id })
+                    .from(reviews)
+                    .where(eq(reviews.orderId, order.orderId));
+
+                if (existingReview.length === 0) {
+                    // This order hasn't been reviewed yet
+                    return { canReview: true, orderId: order.orderId };
+                }
+            } catch {
+                // Reviews table might not exist, so user can review
+                return { canReview: true, orderId: order.orderId };
+            }
+        }
+
+        // All orders have been reviewed
+        return { canReview: false };
+    } catch (error) {
+        console.error('canUserReview error:', error);
+        return { canReview: false };
+    }
+}
+
+export async function hasUserReviewedOrder(orderId: string): Promise<boolean> {
+    const result = await db.select({ id: reviews.id })
+        .from(reviews)
+        .where(eq(reviews.orderId, orderId));
+    return result.length > 0;
+}
+
+function isMissingTable(error: any) {
+    const errorString = JSON.stringify(error);
+    return (
+        error?.message?.includes('does not exist') ||
+        error?.cause?.message?.includes('does not exist') ||
+        errorString.includes('42P01') ||
+        (errorString.includes('relation') && errorString.includes('does not exist'))
+    );
+}
+
+function isMissingTableOrColumn(error: any) {
+    const errorString = JSON.stringify(error);
+    return isMissingTable(error) || errorString.includes('42703');
+}
+
+async function ensureLoginUsersTable() {
+    await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS login_users (
+            user_id TEXT PRIMARY KEY,
+            username TEXT,
+            created_at TIMESTAMP DEFAULT NOW(),
+            last_login_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+}
+
+async function ensureSettingsTable() {
+    await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+}
+
+async function isLoginUsersBackfilled(): Promise<boolean> {
+    try {
+        const result = await db.select({ value: settings.value })
+            .from(settings)
+            .where(eq(settings.key, 'login_users_backfilled'));
+        return result[0]?.value === '1';
+    } catch (error: any) {
+        if (isMissingTable(error)) {
+            await ensureSettingsTable();
+            return false;
+        }
+        throw error;
+    }
+}
+
+async function markLoginUsersBackfilled() {
+    await db.insert(settings).values({
+        key: 'login_users_backfilled',
+        value: '1',
+        updatedAt: new Date()
+    }).onConflictDoUpdate({
+        target: settings.key,
+        set: { value: '1', updatedAt: new Date() }
+    });
+}
+
+async function backfillLoginUsersFromOrdersAndReviews() {
+    const alreadyBackfilled = await isLoginUsersBackfilled();
+    if (alreadyBackfilled) return;
+
+    await ensureLoginUsersTable();
+
+    try {
+        await db.execute(sql`
+            INSERT INTO login_users (user_id, username, created_at, last_login_at)
+            SELECT user_id, MAX(username) AS username, NOW(), NOW()
+            FROM (
+                SELECT user_id, username
+                FROM orders
+                WHERE user_id IS NOT NULL AND user_id <> ''
+                UNION ALL
+                SELECT user_id, username
+                FROM reviews
+                WHERE user_id IS NOT NULL AND user_id <> ''
+            ) AS users
+            GROUP BY user_id
+            ON CONFLICT (user_id) DO NOTHING
+        `);
+    } catch (error: any) {
+        if (isMissingTable(error)) return;
+        throw error;
+    }
+
+    await markLoginUsersBackfilled();
+}
+
+export async function recordLoginUser(userId: string, username?: string | null) {
+    if (!userId) return;
+
+    try {
+        await db.insert(loginUsers).values({
+            userId,
+            username: username || null,
+            lastLoginAt: new Date()
+        }).onConflictDoUpdate({
+            target: loginUsers.userId,
+            set: { username: username || null, lastLoginAt: new Date() }
+        });
+    } catch (error: any) {
+        if (!isMissingTable(error)) {
+            console.error('recordLoginUser error:', error);
+            return;
+        }
+
+        await ensureLoginUsersTable();
+
+        await db.insert(loginUsers).values({
+            userId,
+            username: username || null,
+            lastLoginAt: new Date()
+        }).onConflictDoUpdate({
+            target: loginUsers.userId,
+            set: { username: username || null, lastLoginAt: new Date() }
+        });
+    }
+}
+
+export async function getVisitorCount(): Promise<number> {
+    try {
+        await backfillLoginUsersFromOrdersAndReviews();
+        const result = await db.select({ count: sql<number>`count(*)::int` })
+            .from(loginUsers);
+        return result[0]?.count || 0;
+    } catch (error: any) {
+        if (isMissingTable(error)) return 0;
+        throw error;
+    }
+}
+
+export async function cancelExpiredOrders(filters: { productId?: string; userId?: string; orderId?: string } = {}) {
+    const productId = filters.productId ?? null;
+    const userId = filters.userId ?? null;
+    const orderId = filters.orderId ?? null;
+
+    try {
+        return await db.transaction(async (tx) => {
+            const expired = await tx.execute(sql`
+                UPDATE orders
+                SET status = 'cancelled'
+                WHERE status = 'pending'
+                  AND created_at < NOW() - INTERVAL '5 minutes'
+                  AND (${productId}::text IS NULL OR product_id = ${productId})
+                  AND (${userId}::text IS NULL OR user_id = ${userId})
+                  AND (${orderId}::text IS NULL OR order_id = ${orderId})
+                RETURNING order_id
+            `);
+
+            const orderIds = (expired.rows || []).map((row: any) => row.order_id as string).filter(Boolean);
+            if (!orderIds.length) return orderIds;
+
+            try {
+                await tx.execute(sql`
+                    ALTER TABLE cards ADD COLUMN IF NOT EXISTS reserved_order_id TEXT;
+                    ALTER TABLE cards ADD COLUMN IF NOT EXISTS reserved_at TIMESTAMP;
+                `);
+            } catch (error: any) {
+                if (!isMissingTableOrColumn(error)) throw error;
+                return orderIds;
+            }
+
+            for (const expiredOrderId of orderIds) {
+                try {
+                    await tx.execute(sql`
+                        UPDATE cards
+                        SET reserved_order_id = NULL, reserved_at = NULL
+                        WHERE reserved_order_id = ${expiredOrderId} AND is_used = false
+                    `);
+                } catch (error: any) {
+                    if (!isMissingTableOrColumn(error)) throw error;
+                    return orderIds;
+                }
+            }
+
+            return orderIds;
+        });
+    } catch (error: any) {
+        if (isMissingTableOrColumn(error)) return [];
+        throw error;
+    }
+}
