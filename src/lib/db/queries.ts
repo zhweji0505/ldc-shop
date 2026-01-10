@@ -54,7 +54,8 @@ export async function getProducts() {
             isActive: products.isActive,
             sortOrder: products.sortOrder,
             purchaseLimit: products.purchaseLimit,
-            stock: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = false then 1 end):: int`,
+            stock: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = false AND (${cards.reservedAt} IS NULL OR ${cards.reservedAt} < NOW() - INTERVAL '5 minutes') then 1 end):: int`,
+            locked: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = false AND (${cards.reservedAt} >= NOW() - INTERVAL '5 minutes') then 1 end):: int`,
             sold: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = true then 1 end):: int`
         })
             .from(products)
@@ -77,7 +78,8 @@ export async function getActiveProducts() {
             category: products.category,
             isHot: products.isHot,
             purchaseLimit: products.purchaseLimit,
-            stock: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = false then 1 end):: int`,
+            stock: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = false AND (${cards.reservedAt} IS NULL OR ${cards.reservedAt} < NOW() - INTERVAL '5 minutes') then 1 end):: int`,
+            locked: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = false AND (${cards.reservedAt} >= NOW() - INTERVAL '5 minutes') then 1 end):: int`,
             sold: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = true then 1 end):: int`
         })
             .from(products)
@@ -100,7 +102,8 @@ export async function getProduct(id: string) {
             category: products.category,
             isHot: products.isHot,
             purchaseLimit: products.purchaseLimit,
-            stock: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = false then 1 end):: int`
+            stock: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = false AND (${cards.reservedAt} IS NULL OR ${cards.reservedAt} < NOW() - INTERVAL '5 minutes') then 1 end):: int`,
+            locked: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = false AND (${cards.reservedAt} >= NOW() - INTERVAL '5 minutes') then 1 end):: int`
         })
             .from(products)
             .leftJoin(cards, eq(products.id, cards.productId))
@@ -259,7 +262,8 @@ export async function searchActiveProducts(params: {
             category: products.category,
             isHot: products.isHot,
             purchaseLimit: products.purchaseLimit,
-            stock: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = false then 1 end):: int`,
+            stock: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = false AND (${cards.reservedAt} IS NULL OR ${cards.reservedAt} < NOW() - INTERVAL '5 minutes') then 1 end):: int`,
+            locked: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = false AND (${cards.reservedAt} >= NOW() - INTERVAL '5 minutes') then 1 end):: int`,
             sold: sql<number>`count(case when COALESCE(${cards.isUsed}, false) = true then 1 end):: int`
         })
             .from(products)
