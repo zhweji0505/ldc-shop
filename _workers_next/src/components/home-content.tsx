@@ -242,7 +242,7 @@ export async function HomeContent({ products, announcement, visitorCount, catego
                                         loading={index < 2 ? "eager" : "lazy"}
                                         decoding="async"
                                         fetchPriority={index < 2 ? "high" : "auto"}
-                                        className="object-cover w-full h-full transition-transform duration-500 group-hover:scale-105"
+                                        className="object-contain w-full h-full transition-transform duration-500 group-hover:scale-[1.03]"
                                     />
                                     {/* Overlay gradient */}
                                     <div className="absolute inset-0 bg-gradient-to-t from-background/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
