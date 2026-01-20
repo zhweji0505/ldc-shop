@@ -6,9 +6,10 @@ import { DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { LanguageSwitcher } from "@/components/language-switcher"
 import { ShoppingBag } from "lucide-react"
 import { Input } from "@/components/ui/input"
-import { useRouter } from "next/navigation"
-import { useState } from "react"
+import { usePathname, useRouter } from "next/navigation"
+import { useCallback, useEffect, useState } from "react"
 import { cn } from "@/lib/utils"
+import { getMyUnreadCount } from "@/actions/user-notifications"
 
 export function HeaderLogo({ adminName, shopNameOverride, shopLogoOverride }: { adminName?: string; shopNameOverride?: string | null; shopLogoOverride?: string | null }) {
     const { t } = useI18n()
@@ -101,7 +102,10 @@ export function HeaderUserMenuItems({ isAdmin }: { isAdmin: boolean }) {
                 <Link href="/nav">{t('common.navigator')}</Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
-                <Link href="/profile">{t('common.myOrders').includes('订单') ? "个人中心" : "Profile"}</Link>
+                <Link href="/profile" className="flex w-full items-center justify-between gap-2">
+                    <span>{t('common.myOrders').includes('订单') ? "个人中心" : "Profile"}</span>
+                    <HeaderUnreadBadge className="ml-2" />
+                </Link>
             </DropdownMenuItem>
             {isAdmin && (
                 <DropdownMenuItem asChild>
@@ -113,3 +117,45 @@ export function HeaderUserMenuItems({ isAdmin }: { isAdmin: boolean }) {
 }
 
 export { LanguageSwitcher }
+
+export function HeaderUnreadBadge({ initialCount = 0, className }: { initialCount?: number; className?: string }) {
+    const [count, setCount] = useState(initialCount)
+    const pathname = usePathname()
+
+    const refresh = useCallback(async () => {
+        try {
+            const res = await getMyUnreadCount()
+            if (res?.success) {
+                setCount(res.count || 0)
+            }
+        } catch {
+            // ignore
+        }
+    }, [])
+
+    useEffect(() => {
+        refresh()
+    }, [pathname, refresh])
+
+    useEffect(() => {
+        const handler = () => {
+            void refresh()
+        }
+        if (typeof window !== "undefined") {
+            window.addEventListener("ldc:notifications-updated", handler)
+        }
+        return () => {
+            if (typeof window !== "undefined") {
+                window.removeEventListener("ldc:notifications-updated", handler)
+            }
+        }
+    }, [refresh])
+
+    if (!count) return null
+
+    return (
+        <span className={cn("inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium text-white", className)}>
+            {count > 99 ? "99+" : count}
+        </span>
+    )
+}

@@ -12,7 +12,7 @@ import {
 import { User } from "lucide-react"
 import { SignInButton } from "@/components/signin-button"
 import { SignOutButton } from "@/components/signout-button"
-import { HeaderLogo, HeaderNav, HeaderSearch, HeaderUserMenuItems, LanguageSwitcher } from "@/components/header-client-parts"
+import { HeaderLogo, HeaderNav, HeaderSearch, HeaderUserMenuItems, HeaderUnreadBadge, LanguageSwitcher } from "@/components/header-client-parts"
 import { ModeToggle } from "@/components/mode-toggle"
 import { getSetting, recordLoginUser, setSetting, getUserUnreadNotificationCount } from "@/lib/db/queries"
 import { CheckInButton } from "@/components/checkin-button"
@@ -86,13 +86,9 @@ export async function SiteHeader() {
                         {user ? (
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" className="relative h-8 w-8 rounded-full bg-background/70 hover:bg-background/90 transition-transform duration-200 hover:-translate-y-0.5">
-                                        {unreadCount > 0 && (
-                                            <span className="absolute -top-1 -right-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium text-white shadow-sm">
-                                                {unreadCount > 99 ? "99+" : unreadCount}
-                                            </span>
-                                        )}
-                                        <Avatar className="h-8 w-8">
+                                    <Button variant="ghost" className="relative h-8 w-8 overflow-visible rounded-full bg-background/70 hover:bg-background/90 transition-transform duration-200 hover:-translate-y-0.5">
+                                        <HeaderUnreadBadge initialCount={unreadCount} className="absolute -top-1 -right-1 z-10 pointer-events-none shadow-sm" />
+                                        <Avatar className="relative z-0 h-8 w-8">
                                             <AvatarImage src={user.avatar_url || ''} alt={user.name || ''} />
                                             <AvatarFallback><User className="h-4 w-4" /></AvatarFallback>
                                         </Avatar>

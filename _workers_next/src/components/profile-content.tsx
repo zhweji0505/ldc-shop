@@ -14,7 +14,7 @@ import { toast } from "sonner"
 import { updateProfileEmail } from "@/actions/profile"
 import { useEffect, useState } from "react"
 import { CheckInButton } from "@/components/checkin-button"
-import { getMyNotifications, markAllNotificationsRead } from "@/actions/user-notifications"
+import { getMyNotifications, markAllNotificationsRead, markNotificationRead } from "@/actions/user-notifications"
 
 interface ProfileContentProps {
     user: {
@@ -49,6 +49,7 @@ export function ProfileContent({ user, points, checkinEnabled, orderStats, notif
     const [pointsValue, setPointsValue] = useState(points)
     const [notifications, setNotifications] = useState(initialNotifications)
     const [markingAll, setMarkingAll] = useState(false)
+    const [markingId, setMarkingId] = useState<number | null>(null)
 
     const unreadCount = notifications.filter((n) => !n.isRead).length
 
@@ -58,6 +59,30 @@ export function ProfileContent({ user, points, checkinEnabled, orderStats, notif
             return JSON.parse(data) as { params?: Record<string, string | number>; href?: string }
         } catch {
             return {}
+        }
+    }
+
+    const emitNotificationUpdate = () => {
+        if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("ldc:notifications-updated"))
+        }
+    }
+
+    const handleMarkRead = async (id: number) => {
+        if (markingId === id) return
+        setMarkingId(id)
+        setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)))
+        try {
+            const res = await markNotificationRead(id)
+            if (!res?.success) {
+                // revert if failed
+                setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: false } : n)))
+            }
+            emitNotificationUpdate()
+        } catch {
+            setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: false } : n)))
+        } finally {
+            setMarkingId(null)
         }
     }
 
@@ -219,12 +244,13 @@ export function ProfileContent({ user, points, checkinEnabled, orderStats, notif
                                     setMarkingAll(true)
                                     try {
                                         const res = await markAllNotificationsRead()
-                                        if (res?.success) {
-                                            setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })))
-                                            toast.success(t('profile.inboxMarked'))
-                                        } else {
-                                            toast.error(t('common.error'))
-                                        }
+                                    if (res?.success) {
+                                        setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })))
+                                        emitNotificationUpdate()
+                                        toast.success(t('profile.inboxMarked'))
+                                    } else {
+                                        toast.error(t('common.error'))
+                                    }
                                     } catch {
                                         toast.error(t('common.error'))
                                     } finally {
@@ -271,11 +297,25 @@ export function ProfileContent({ user, points, checkinEnabled, orderStats, notif
                                 )
 
                                 return meta.href ? (
-                                    <Link key={n.id} href={meta.href} className="block">
+                                    <Link
+                                        key={n.id}
+                                        href={meta.href}
+                                        className="block"
+                                        onClick={() => {
+                                            if (!n.isRead) void handleMarkRead(n.id)
+                                        }}
+                                    >
                                         {body}
                                     </Link>
                                 ) : (
-                                    <div key={n.id}>{body}</div>
+                                    <div
+                                        key={n.id}
+                                        onClick={() => {
+                                            if (!n.isRead) void handleMarkRead(n.id)
+                                        }}
+                                    >
+                                        {body}
+                                    </div>
                                 )
                             })}
                         </div>
